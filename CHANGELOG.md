@@ -1,3 +1,10 @@
+## 3.11.6
+
+This is a patch release that:
+
+- Fixes a bug causing network profiling to stop working in certain situations.
+  (issue [dart-lang/sdk#63156]).
+
 ## 3.11.5
 
 **Released on:** 2026-04-15
