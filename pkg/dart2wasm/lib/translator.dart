@@ -140,7 +140,6 @@ class Translator with KernelNodes {
   late final TableBasedGlobals tableBasedGlobals;
   late final DispatchTable dispatchTable;
   late final DynamicDispatchTable dynamicDispatchTable;
-  DispatchTable? dynamicMainModuleDispatchTable;
   late final Globals globals;
   late final DartGlobals dartGlobals;
   late final Constants constants;
@@ -545,7 +544,6 @@ class Translator with KernelNodes {
 
     dispatchTable.build();
     dynamicDispatchTable.build(dynamicCallShapes);
-    dynamicMainModuleDispatchTable?.build();
     functions.initialize();
 
     drainCompletionQueue();
@@ -759,10 +757,19 @@ class Translator with KernelNodes {
     w.InstructionsBuilder b,
   ) {
     final callTarget = directCallTarget(reference);
+
+    late final List<w.ValueType> outputs;
     if (callTarget.supportsInlining && callTarget.shouldInline) {
-      return b.inlineCallTo(callTarget);
+      outputs = b.inlineCallTo(callTarget);
+    } else {
+      outputs = callFunction(callTarget.function, b);
     }
-    return callFunction(functions.getFunction(reference), b);
+    if (callTarget.synthesizeNullReturnValue) {
+      assert(outputs.isEmpty);
+      b.ref_null(w.HeapType.none);
+      return [w.RefType(w.HeapType.none, nullable: true)];
+    }
+    return outputs;
   }
 
   late final WasmMemoryImporter _importedMemories = WasmMemoryImporter(
@@ -796,9 +803,7 @@ class Translator with KernelNodes {
     SelectorInfo selector, {
     Reference? interfaceTarget,
     required bool useUncheckedEntry,
-    DispatchTable? table,
   }) {
-    table ??= dispatchTable;
     functions.recordSelectorUse(selector, useUncheckedEntry);
 
     final offset = selector.targets(unchecked: useUncheckedEntry).offset;
@@ -814,7 +819,7 @@ class Translator with KernelNodes {
       b.i32_add();
     }
     final signature = selector.signature;
-    b.call_indirect(signature, table.getWasmTable(b.moduleBuilder));
+    b.call_indirect(signature, dispatchTable.getWasmTable(b.moduleBuilder));
     b.emitUnreachableIfNoResult(signature.outputs);
   }
 
@@ -943,6 +948,10 @@ class Translator with KernelNodes {
     bool nullable = type.isPotentiallyNullable;
     if (type is InterfaceType) {
       Class cls = type.classNode;
+
+      if (cls == coreTypes.deprecatedNullClass) {
+        return const w.RefType.none(nullable: true);
+      }
 
       // Abstract `Function`?
       if (cls == coreTypes.functionClass) {
@@ -1729,22 +1738,8 @@ class Translator with KernelNodes {
   }
 
   w.FunctionType signatureForDirectCall(Reference target) {
-    return _signatureForModule(
-      target,
-      target.asMember.isInstanceMember ? dispatchTable : null,
-    );
-  }
-
-  w.FunctionType signatureForMainModule(Reference target) {
-    return _signatureForModule(
-      target,
-      target.asMember.isInstanceMember ? dynamicMainModuleDispatchTable! : null,
-    );
-  }
-
-  w.FunctionType _signatureForModule(Reference target, DispatchTable? table) {
-    if (table != null && !target.isBodyReference) {
-      final selector = table.selectorForTarget(target);
+    if (target.asMember.isInstanceMember && !target.isBodyReference) {
+      final selector = dispatchTable.selectorForTarget(target);
       if (selector.containsTarget(target)) {
         return selector.signature;
       }
@@ -1752,10 +1747,25 @@ class Translator with KernelNodes {
     return functions.getFunctionType(target);
   }
 
-  ParameterInfo paramInfoForDirectCall(Reference target) {
-    if (target.asMember.isInstanceMember) {
+  bool synthesizeNullReturnValue(Reference target) {
+    final member = target.asMember;
+    if (member.isInstanceMember) {
       final table = dispatchTable;
       final selector = table.selectorForTarget(target);
+      if (selector.containsTarget(target)) {
+        assert(
+          !selector.synthesizeNullReturnValue ||
+              selector.signature.outputs.isEmpty,
+        );
+        return selector.synthesizeNullReturnValue;
+      }
+    }
+    return functions.synthesizeNullReturnValue(target);
+  }
+
+  ParameterInfo paramInfoForDirectCall(Reference target) {
+    if (target.asMember.isInstanceMember) {
+      final selector = dispatchTable.selectorForTarget(target);
       if (selector.containsTarget(target)) {
         return selector.paramInfo;
       }
@@ -2012,6 +2022,10 @@ class Translator with KernelNodes {
   ) {
     if (inferredType == null) return null;
 
+    if (defaultType is VoidType) {
+      defaultType = coreTypes.objectNullableRawType;
+    }
+
     // To check whether [inferredType] is more precise than [defaultType] we
     // require it (for now) to be an interface type.
     if (defaultType is! InterfaceType) return null;
@@ -2036,6 +2050,8 @@ class Translator with KernelNodes {
     if (!hierarchy.isSubInterfaceOf(concreteClass, defaultType.classNode)) {
       return null;
     }
+
+    if (concreteClass == coreTypes.deprecatedNullClass) return const NullType();
 
     final typeParameters = concreteClass.typeParameters;
     final typeArguments = typeParameters.isEmpty

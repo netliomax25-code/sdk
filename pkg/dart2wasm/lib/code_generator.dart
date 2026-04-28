@@ -14,7 +14,6 @@ import 'package:wasm_builder/wasm_builder.dart' as w;
 import 'async.dart';
 import 'class_info.dart';
 import 'closures.dart';
-import 'dispatch_table.dart';
 import 'functions.dart';
 import 'globals.dart';
 import 'intrinsics.dart';
@@ -1987,8 +1986,7 @@ abstract class AstCodeGenerator
       getter: kind.isGetter,
       setter: kind.isSetter,
     );
-    final dispatchTable = translator.dispatchTable;
-    SelectorInfo selector = dispatchTable.selectorForTarget(reference);
+    final selector = translator.dispatchTable.selectorForTarget(reference);
     final signature = selector.signature;
     final name = selector.entryPointName(useUncheckedEntry);
     assert(selector.name == interfaceTarget.name.text);
@@ -2062,8 +2060,12 @@ abstract class AstCodeGenerator
         selector,
         interfaceTarget: reference,
         useUncheckedEntry: useUncheckedEntry,
-        table: dispatchTable,
       );
+    }
+    if (selector.synthesizeNullReturnValue) {
+      assert(selector.signature.outputs.isEmpty);
+      b.ref_null(w.HeapType.none);
+      return w.RefType(w.HeapType.none, nullable: true);
     }
 
     return translator.outputOrVoid(signature.outputs);
@@ -3546,6 +3548,7 @@ CodeGenerator? getInlinableMemberCodeGenerator(
       translator,
       functionType,
       member,
+      reference,
       reference.entryKind,
     );
   }
@@ -3558,12 +3561,14 @@ CodeGenerator? getInlinableMemberCodeGenerator(
 
 class SynchronousProcedureCodeGenerator extends AstCodeGenerator {
   final Procedure member;
+  final Reference reference;
   final EntryPoint kind;
 
   SynchronousProcedureCodeGenerator(
     Translator translator,
     w.FunctionType functionType,
     this.member,
+    this.reference,
     this.kind,
   ) : super(translator, functionType, member) {
     assert(
@@ -3639,7 +3644,7 @@ class SynchronousProcedureCodeGenerator extends AstCodeGenerator {
 
     final outputs = call(member.bodyReference);
     if (outputs.isNotEmpty) {
-      translator.convertType(b, outputs.single, functionType.outputs.single);
+      translator.convertType(b, outputs.single, returnType);
     }
     _returnFromFunction();
     b.end();
@@ -6094,6 +6099,9 @@ abstract class CallTarget {
 
   CallTarget(this.signature);
 
+  /// Whether callers should synthesize a `null` return value.
+  bool get synthesizeNullReturnValue => false;
+
   /// Whether this call target supports inlining.
   bool get supportsInlining => false;
 
@@ -6122,6 +6130,10 @@ class AstCallTarget extends CallTarget {
   final Reference _reference;
 
   AstCallTarget(super.signature, this._translator, this._reference);
+
+  @override
+  bool get synthesizeNullReturnValue =>
+      _translator.synthesizeNullReturnValue(_reference);
 
   @override
   String get name => _translator.functions.getFunctionName(_reference);
