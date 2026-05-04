@@ -214,7 +214,7 @@ void FUNCTION_NAME(SynchronousSocket_Read)(Dart_NativeArguments args) {
 
   int64_t length = 0;
   if (!DartUtils::GetInt64Value(Dart_GetNativeArgument(args, 1), &length) ||
-      (length < 0)) {
+      (length < 0) || (length > kIntptrMax)) {
     Dart_SetReturnValue(args, DartUtils::NewDartArgumentError(
                                   "First parameter must be an integer."));
     return;

@@ -27,6 +27,13 @@ Dart_Handle IOBuffer::Allocate(intptr_t size, uint8_t** buffer) {
   return result;
 }
 
+Dart_Handle IOBuffer::Allocate(int64_t size, uint8_t** buffer) {
+  if (size < 0 || size > kIntptrMax) {
+    return Dart_Null();
+  }
+  return Allocate(static_cast<intptr_t>(size), buffer);
+}
+
 uint8_t* IOBuffer::Allocate(intptr_t size) {
   return static_cast<uint8_t*>(calloc(size, sizeof(uint8_t)));
 }

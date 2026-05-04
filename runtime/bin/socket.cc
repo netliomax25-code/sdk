@@ -533,7 +533,7 @@ void FUNCTION_NAME(Socket_Read)(Dart_NativeArguments args) {
       Socket::GetSocketIdNativeField(Dart_GetNativeArgument(args, 0));
   int64_t length = 0;
   if (DartUtils::GetInt64Value(Dart_GetNativeArgument(args, 1), &length) &&
-      (length >= 0)) {
+      (length >= 0) && (length <= kIntptrMax)) {
     if (Socket::short_socket_read()) {
       length = (length + 1) / 2;
     }
@@ -679,7 +679,7 @@ void FUNCTION_NAME(Socket_ReceiveMessage)(Dart_NativeArguments args) {
   }
   const intptr_t alloc_size = static_cast<intptr_t>(buffer_num_bytes);
   uint8_t* buffer = nullptr;
-  Dart_Handle data = IOBuffer::Allocate(alloc_size, &buffer);
+  Dart_Handle data = IOBuffer::Allocate(buffer_num_bytes, &buffer);
   if (Dart_IsNull(data)) {
     Dart_ThrowException(DartUtils::NewDartOSError());
   }
@@ -698,16 +698,11 @@ void FUNCTION_NAME(Socket_ReceiveMessage)(Dart_NativeArguments args) {
     Dart_ThrowException(error);
   }
   delete os_error;
-  if (buffer_num_bytes < 0 || buffer_num_bytes > alloc_size) {
-    Dart_ThrowException(
-        DartUtils::NewDartArgumentError("Invalid buffer length."));
-  }
   if (buffer_num_bytes > 0 && buffer_num_bytes != alloc_size) {
     // If received fewer than allocated buffer size, truncate buffer.
     uint8_t* new_buffer = nullptr;
     Dart_Handle new_data =
-        IOBuffer::Allocate(static_cast<intptr_t>(buffer_num_bytes),
-                           &new_buffer);
+        IOBuffer::Allocate(buffer_num_bytes, &new_buffer);
     if (Dart_IsNull(new_data)) {
       Dart_ThrowException(DartUtils::NewDartOSError());
     }
